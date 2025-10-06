@@ -1,12 +1,15 @@
-
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { FormState, GeneratedProductInfo, GeneratedImage, ImageFile } from '../types';
 
-if (!process.env.API_KEY) {
-  throw new Error("API_KEY environment variable not set");
+// Ambil API Key dari window object yang di-set oleh config.js
+const apiKey = (window as any).GEMINI_API_KEY;
+
+if (!apiKey) {
+  alert("API Key Gemini tidak ditemukan. Pastikan Anda sudah membuat file config.js dan memasukkan API key Anda.");
+  throw new Error("API_KEY not found in window.GEMINI_API_KEY");
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: apiKey });
 
 export const generateProductInfo = async (imageBase64: string, mimeType: string): Promise<GeneratedProductInfo> => {
   const response = await ai.models.generateContent({
@@ -71,52 +74,79 @@ export const removeBackground = async (imageBase64: string, mimeType: string): P
   return null;
 };
 
-const buildImageGenerationPrompt = (formState: FormState): string => {
-    let prompt = `Buat gambar fotorealistik berkualitas tinggi untuk iklan video.`;
+export const generateStoryImages = async (formState: FormState): Promise<GeneratedImage[]> => {
+    const parts: any[] = [];
     
-    // Product
-    prompt += ` Produk utama adalah "${formState.productName}". Deskripsi: "${formState.productDescription}".`;
-    
-    // Character
-    if (formState.characterInputMode === 'describe' && formState.characterDescription.trim() !== '') {
-        prompt += ` Tampilkan seorang model ${formState.characterGender} etnis ${formState.characterEthnicity} yang dideskripsikan sebagai: "${formState.characterDescription}". Model harus berinteraksi secara alami dengan produk.`;
-    } else if (formState.characterInputMode === 'upload' && formState.characterImage) {
-        prompt += ` Gunakan model atau karakter dari gambar yang diunggah sebagai referensi utama.`;
-    } else {
-        prompt += ` Tampilkan seseorang yang cocok dengan target audience produk: "${formState.targetAudience}".`;
+    if (formState.productImage) {
+        parts.push({
+            inlineData: {
+                mimeType: formState.productImage.mimeType,
+                data: formState.productImage.base64,
+            },
+        });
     }
 
-    // Scene and Style
-    prompt += ` Lokasi diatur di ${formState.location}.`;
-    prompt += ` Gaya visualnya adalah ${formState.template.split(' ')[0]}, dengan nuansa yang sesuai dengan gaya video "${formState.videoStyle}".`;
-    prompt += ` Pencahayaan harus profesional dan menonjolkan produk.`;
-    prompt += ` Aspek rasio gambar adalah ${formState.aspectRatio}.`;
+    if (formState.characterInputMode === 'upload' && formState.characterImage) {
+        parts.push({
+            inlineData: {
+                mimeType: formState.characterImage.mimeType,
+                data: formState.characterImage.base64,
+            },
+        });
+    }
+
+    let textPrompt = `Tugas: Buat gambar fotorealistik baru untuk sebuah iklan.
+
+**Instruksi:**
+1.  **Komposisi Adegan**: Gabungkan elemen dari gambar yang disediakan ke dalam adegan baru yang koheren.
+2.  **Produk**: ${formState.productImage ? 'Gambar pertama adalah produk' : 'Produknya adalah'} "${formState.productName}". Tempatkan produk secara alami dalam adegan.
+3.  **Karakter**: ${
+        formState.characterInputMode === 'upload' && formState.characterImage
+        ? 'Gambar kedua adalah karakter referensi. Pertahankan kemiripan yang sama persis (wajah, rambut, dll). Karakter harus berinteraksi dengan produk.'
+        : formState.characterDescription.trim() !== ''
+        ? `Buat karakter yang dideskripsikan sebagai: ${formState.characterGender}, etnis ${formState.characterEthnicity}, "${formState.characterDescription}". Karakter harus berinteraksi dengan produk.`
+        : `Buat karakter yang cocok untuk target audiens: "${formState.targetAudience}". Karakter harus berinteraksi dengan produk.`
+    }
+4.  **Adegan**: Latar tempatnya adalah "${formState.location}".
+5.  **Gaya**: Gaya visualnya adalah "${formState.template.split(' ')[0]}" dengan suasana yang sesuai dengan "${formState.videoStyle}".
+6.  **Pencahayaan**: Gunakan pencahayaan profesional untuk menonjolkan produk.
+7.  **Aspek Rasio**: Gambar akhir harus memiliki aspek rasio ${formState.aspectRatio}.`;
     
-    return prompt;
-};
+    parts.push({ text: textPrompt });
 
+    // Generate 3 images in parallel
+    const imagePromises = Array(3).fill(0).map(() => 
+        ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts },
+            config: {
+                responseModalities: [Modality.IMAGE, Modality.TEXT],
+            },
+        })
+    );
 
-export const generateStoryImages = async (formState: FormState): Promise<GeneratedImage[]> => {
-    const prompt = buildImageGenerationPrompt(formState);
+    const responses = await Promise.all(imagePromises);
+
+    const generatedImages: GeneratedImage[] = [];
+    responses.forEach((response, index) => {
+        const imagePart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
+        if (imagePart && imagePart.inlineData) {
+            const base64 = imagePart.inlineData.data;
+            const mimeType = imagePart.inlineData.mimeType;
+            generatedImages.push({
+                id: `img-${index}-${Date.now()}`,
+                url: `data:${mimeType};base64,${base64}`,
+                base64: base64,
+                mimeType: mimeType,
+            });
+        }
+    });
     
-    const response = await ai.models.generateImages({
-        model: 'imagen-4.0-generate-001',
-        prompt: prompt,
-        config: {
-          numberOfImages: 3,
-          outputMimeType: 'image/jpeg',
-          aspectRatio: formState.aspectRatio === '16:9' ? '16:9' : '9:16',
-        },
-    });
+    if (generatedImages.length === 0) {
+        throw new Error("Model tidak dapat menghasilkan gambar. Coba ubah pengaturan atau gambar input.");
+    }
 
-    return response.generatedImages.map((img, index) => {
-        const base64 = img.image.imageBytes;
-        return {
-            id: `img-${index}-${Date.now()}`,
-            url: `data:image/jpeg;base64,${base64}`,
-            base64: base64,
-        };
-    });
+    return generatedImages;
 };
 
 const buildVideoGenerationPrompt = (formState: FormState): string => {
@@ -137,12 +167,13 @@ const buildVideoGenerationPrompt = (formState: FormState): string => {
 export const generateVideo = async (formState: FormState, selectedImage: GeneratedImage) => {
     const prompt = buildVideoGenerationPrompt(formState);
     
+    // Perlu menambahkan apiKey lagi saat fetch link download
     const operation = await ai.models.generateVideos({
       model: 'veo-2.0-generate-001',
       prompt: prompt,
       image: {
         imageBytes: selectedImage.base64,
-        mimeType: 'image/jpeg',
+        mimeType: selectedImage.mimeType,
       },
       config: {
         numberOfVideos: 1
@@ -154,3 +185,15 @@ export const generateVideo = async (formState: FormState, selectedImage: Generat
 export const pollVideoOperation = async (operation: any) => {
     return await ai.operations.getVideosOperation({ operation: operation });
 };
+
+// Fungsi ini perlu diubah untuk menyertakan API Key
+export const fetchVideoWithApiKey = async (downloadLink: string): Promise<Blob> => {
+    if (!apiKey) {
+        throw new Error("API Key tidak ditemukan untuk mengunduh video.");
+    }
+    const response = await fetch(`${downloadLink}&key=${apiKey}`);
+    if (!response.ok) {
+        throw new Error(`Gagal mengunduh video: ${response.statusText}`);
+    }
+    return await response.blob();
+}

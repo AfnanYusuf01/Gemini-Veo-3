@@ -1,4 +1,3 @@
-
 export interface ImageFile {
   file: File;
   base64: string;
@@ -61,6 +60,7 @@ export interface GeneratedImage {
   id: string;
   url: string;
   base64: string;
+  mimeType: string;
 }
 
 export type VideoGenerationStatus = 'idle' | 'generating' | 'polling' | 'success' | 'error';

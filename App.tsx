@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo } from 'react';
 import type { 
   FormState,
@@ -24,7 +23,8 @@ import {
   removeBackground,
   generateStoryImages,
   generateVideo,
-  pollVideoOperation
+  pollVideoOperation,
+  fetchVideoWithApiKey
 } from './services/geminiService';
 
 // Helper to convert file to base64
@@ -95,19 +95,20 @@ const App: React.FC = () => {
       setLoadingStep('Menganalisis produk...');
 
       try {
-        let imageForAnalysis = originalImage;
+        let imageForProcessing = originalImage;
         if (formState.removeBg) {
             setLoadingStep('Menghapus background...');
             const removedBgData = await removeBackground(originalImage.base64, originalImage.mimeType);
             if(removedBgData) {
               const preview = `data:image/png;base64,${removedBgData}`;
-              imageForAnalysis = { file, base64: removedBgData, mimeType: 'image/png', preview };
-              setFormState(prev => ({ ...prev, productImagePreview: preview }));
+              const processedImage = { file, base64: removedBgData, mimeType: 'image/png', preview };
+              imageForProcessing = processedImage;
+              setFormState(prev => ({ ...prev, productImage: processedImage, productImagePreview: preview }));
             }
         }
 
         setLoadingStep('Membuat deskripsi produk...');
-        const productInfo: GeneratedProductInfo = await generateProductInfo(imageForAnalysis.base64, imageForAnalysis.mimeType);
+        const productInfo: GeneratedProductInfo = await generateProductInfo(imageForProcessing.base64, imageForProcessing.mimeType);
         setFormState(prev => ({
           ...prev,
           productName: productInfo.namaProduk || '',
@@ -149,6 +150,9 @@ const App: React.FC = () => {
     try {
       const images = await generateStoryImages(formState);
       setGeneratedImages(images);
+      if (images.length > 0) {
+        setSelectedImage(images[0]); // Automatically select the first image
+      }
     } catch (err) {
       console.error(err);
       setError('Gagal membuat gambar. Coba lagi dengan prompt yang berbeda.');
@@ -183,9 +187,8 @@ const App: React.FC = () => {
       }
       
       const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-      if (downloadLink && process.env.API_KEY) {
-        const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-        const videoBlob = await response.blob();
+      if (downloadLink) {
+        const videoBlob = await fetchVideoWithApiKey(downloadLink);
         setVideoUrl(URL.createObjectURL(videoBlob));
       } else {
         throw new Error('Gagal mendapatkan link download video.');
