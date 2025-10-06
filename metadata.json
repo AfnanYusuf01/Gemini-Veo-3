@@ -1,0 +1,5 @@
+{
+  "name": "Copy of VEO AI Video Generator",
+  "description": "An AI-powered web application to generate promotional videos from product images. It automatically generates product details, creates image variations, and produces a final video with customizable styles and formats.",
+  "requestFramePermissions": []
+}
